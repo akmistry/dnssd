@@ -17,10 +17,23 @@ const (
 var (
 	ip4Addr   = &net.UDPAddr{IP: net.ParseIP("224.0.0.251"), Port: 5353}
 	localZone = &zone{entries: make(map[string][]dns.RR)}
+
+	ip4Server *server
 )
+
+type Response struct {
+	Chan <-chan dns.RR
+
+	ch   chan<- dns.RR
+	done chan bool
+	q    dns.Question
+}
 
 type server struct {
 	conn *net.UDPConn
+
+	lock    sync.Mutex
+	queries []*Response
 }
 
 type zone struct {
@@ -47,8 +60,36 @@ func PublishRR(rr dns.RR) {
 	localZone.publish(rr)
 }
 
+func Query(name string) *Response {
+	ch := make(chan dns.RR)
+	resp := &Response{Chan: ch, ch: ch, done: make(chan bool)}
+	resp.q = dns.Question{Name: name, Qtype: dns.TypeANY, Qclass: dns.ClassINET}
+	go resp.query()
+	return resp
+}
+
+func (r *Response) Done() {
+	close(r.done)
+}
+
+func (r *Response) query() {
+	ip4Server.query(r)
+
+	<-r.done
+	ip4Server.endQuery(r)
+}
+
+func (r *Response) answer(rr dns.RR) {
+	select {
+	case <-r.done:
+		// Do nothing, query is finished.
+	case r.ch <- rr:
+		// Answer delivered.
+	}
+}
+
 func init() {
-	newServer(ip4Addr)
+	ip4Server = newServer(ip4Addr)
 }
 
 func newServer(addr *net.UDPAddr) *server {
@@ -60,6 +101,50 @@ func newServer(addr *net.UDPAddr) *server {
 	s := &server{conn: conn}
 	go s.listen()
 	return s
+}
+
+func (s *server) query(r *Response) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	s.queries = append(s.queries, r)
+
+	msg := new(dns.Msg)
+	// TODO: Use ID
+	// msg.Id = dns.Id()
+	msg.Question = []dns.Question{r.q}
+	err := s.send(msg, s.conn.LocalAddr().(*net.UDPAddr))
+	if err != nil {
+		log.Println("Error sending query", err)
+	}
+}
+
+func (s *server) endQuery(r *Response) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	for i, q := range s.queries {
+		if q == r {
+			last := len(s.queries) - 1
+			s.queries[i] = s.queries[last]
+			s.queries[last] = nil
+			s.queries = s.queries[:last]
+			break
+		}
+	}
+}
+
+func (s *server) send(msg *dns.Msg, addr *net.UDPAddr) error {
+	b, err := msg.Pack()
+	if err != nil {
+		return err
+	}
+
+	_, err = s.conn.WriteToUDP(b, addr)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *server) listen() {
@@ -87,14 +172,9 @@ func (s *server) listen() {
 		}
 
 		if resp != nil {
-			b, err := resp.PackBuffer(buf)
+			err = s.send(resp, addr)
 			if err != nil {
-				log.Println("Unable to pack repsonse", err)
-			} else {
-				n, err = s.conn.WriteToUDP(b, addr)
-				if err != nil {
-					log.Println("Unable to send response", err)
-				}
+				log.Println("Unable to send response", err)
 			}
 		}
 	}
@@ -123,6 +203,22 @@ func (s *server) doQuestion(msg *dns.Msg) *dns.Msg {
 }
 
 func (s *server) doResponse(msg *dns.Msg) *dns.Msg {
+	if len(msg.Question) != 1 {
+		// TODO: Support requests/responses with multiple questions
+		return nil
+	}
+
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	for _, q := range s.queries {
+		if q.q == msg.Question[0] {
+			for _, a := range msg.Answer {
+				q.answer(a)
+			}
+		}
+	}
+
 	return nil
 }
 
