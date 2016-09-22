@@ -21,19 +21,11 @@ var (
 	ip4Server *server
 )
 
-type Response struct {
-	Chan <-chan dns.RR
-
-	ch   chan<- dns.RR
-	done chan bool
-	q    dns.Question
-}
-
 type server struct {
+	addr *net.UDPAddr
 	conn *net.UDPConn
 
-	lock    sync.Mutex
-	queries []*Response
+	queries *queryMap
 }
 
 type zone struct {
@@ -60,42 +52,6 @@ func PublishRR(rr dns.RR) {
 	localZone.publish(rr)
 }
 
-func Query(name string) *Response {
-	ch := make(chan dns.RR)
-	resp := &Response{Chan: ch, ch: ch, done: make(chan bool)}
-	resp.q = dns.Question{Name: name, Qtype: dns.TypeANY, Qclass: dns.ClassINET}
-	go resp.query()
-	return resp
-}
-
-func QueryType(name string, t uint16) *Response {
-	ch := make(chan dns.RR)
-	resp := &Response{Chan: ch, ch: ch, done: make(chan bool)}
-	resp.q = dns.Question{Name: name, Qtype: t, Qclass: dns.ClassINET}
-	go resp.query()
-	return resp
-}
-
-func (r *Response) Done() {
-	close(r.done)
-}
-
-func (r *Response) query() {
-	ip4Server.query(r)
-
-	<-r.done
-	ip4Server.endQuery(r)
-}
-
-func (r *Response) answer(rr dns.RR) {
-	select {
-	case <-r.done:
-		// Do nothing, query is finished.
-	case r.ch <- rr:
-		// Answer delivered.
-	}
-}
-
 func init() {
 	ip4Server = newServer(ip4Addr)
 }
@@ -106,40 +62,26 @@ func newServer(addr *net.UDPAddr) *server {
 		log.Panicln("Unable to listen to MDNS port", err)
 	}
 
-	s := &server{conn: conn}
+	s := &server{addr: addr, conn: conn, queries: newQueryMap()}
 	go s.listen()
 	return s
 }
 
 func (s *server) query(r *Response) {
-	s.lock.Lock()
-	s.queries = append(s.queries, r)
-	s.lock.Unlock()
+	s.queries.add(r)
 
 	msg := new(dns.Msg)
 	// TODO: Use ID
 	// msg.Id = dns.Id()
 	msg.Question = []dns.Question{r.q}
-	//	err := s.send(msg, s.conn.LocalAddr().(*net.UDPAddr))
-	err := s.send(msg, ip4Addr)
+	err := s.send(msg, s.addr)
 	if err != nil {
 		log.Println("Error sending query", err)
 	}
 }
 
 func (s *server) endQuery(r *Response) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
-	for i, q := range s.queries {
-		if q == r {
-			last := len(s.queries) - 1
-			s.queries[i] = s.queries[last]
-			s.queries[last] = nil
-			s.queries = s.queries[:last]
-			break
-		}
-	}
+	s.queries.remove(r)
 }
 
 func (s *server) send(msg *dns.Msg, addr *net.UDPAddr) error {
@@ -152,7 +94,6 @@ func (s *server) send(msg *dns.Msg, addr *net.UDPAddr) error {
 	if err != nil {
 		return err
 	}
-	log.Println("****************** Sent", msg)
 	return nil
 }
 
@@ -170,8 +111,6 @@ func (s *server) listen() {
 			log.Println("Error unpacking DNS packet", err)
 			continue
 		}
-		log.Println("-----------------------------------------------")
-		log.Println("Addr", addr, "Packet", msg)
 
 		var resp *dns.Msg
 		if msg.MsgHdr.Response {
@@ -218,15 +157,8 @@ func (s *server) doQuestion(msg *dns.Msg) *dns.Msg {
 }
 
 func (s *server) doResponse(msg *dns.Msg) *dns.Msg {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
-	for _, q := range s.queries {
-		for _, a := range msg.Answer {
-			if q.q.Name == a.Header().Name && (q.q.Qtype == a.Header().Rrtype || q.q.Qtype == dns.TypeANY) {
-				q.answer(a)
-			}
-		}
+	for _, a := range msg.Answer {
+		s.queries.answer(a)
 	}
 
 	return nil
