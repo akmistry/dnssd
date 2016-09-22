@@ -105,15 +105,15 @@ func newServer(addr *net.UDPAddr) *server {
 
 func (s *server) query(r *Response) {
 	s.lock.Lock()
-	defer s.lock.Unlock()
-
 	s.queries = append(s.queries, r)
+	s.lock.Unlock()
 
 	msg := new(dns.Msg)
 	// TODO: Use ID
 	// msg.Id = dns.Id()
 	msg.Question = []dns.Question{r.q}
-	err := s.send(msg, s.conn.LocalAddr().(*net.UDPAddr))
+	//	err := s.send(msg, s.conn.LocalAddr().(*net.UDPAddr))
+	err := s.send(msg, ip4Addr)
 	if err != nil {
 		log.Println("Error sending query", err)
 	}
@@ -144,6 +144,7 @@ func (s *server) send(msg *dns.Msg, addr *net.UDPAddr) error {
 	if err != nil {
 		return err
 	}
+	log.Println("****************** Sent", msg)
 	return nil
 }
 
@@ -199,21 +200,20 @@ func (s *server) doQuestion(msg *dns.Msg) *dns.Msg {
 		resp.Answer = append(resp.Answer, localZone.query(q)...)
 	}
 
+	if len(resp.Answer) == 0 {
+		return nil
+	}
+
 	return resp
 }
 
 func (s *server) doResponse(msg *dns.Msg) *dns.Msg {
-	if len(msg.Question) != 1 {
-		// TODO: Support requests/responses with multiple questions
-		return nil
-	}
-
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
 	for _, q := range s.queries {
-		if q.q == msg.Question[0] {
-			for _, a := range msg.Answer {
+		for _, a := range msg.Answer {
+			if q.q.Name == a.Header().Name {
 				q.answer(a)
 			}
 		}
