@@ -1,0 +1,9 @@
+A DNS-SD library for Go.
+
+WARNING: Work-In-Progress. Looks disgusting.
+
+Uses Miek Gieben's excellent DNS library: https://github.com/miekg/dns
+
+TODO: Finish things.
+TODO: Write stuff.
+TODO: Eat Nutella.
