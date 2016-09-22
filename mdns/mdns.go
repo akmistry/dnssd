@@ -68,6 +68,14 @@ func Query(name string) *Response {
 	return resp
 }
 
+func QueryType(name string, t uint16) *Response {
+	ch := make(chan dns.RR)
+	resp := &Response{Chan: ch, ch: ch, done: make(chan bool)}
+	resp.q = dns.Question{Name: name, Qtype: t, Qclass: dns.ClassINET}
+	go resp.query()
+	return resp
+}
+
 func (r *Response) Done() {
 	close(r.done)
 }
@@ -173,6 +181,7 @@ func (s *server) listen() {
 		}
 
 		if resp != nil {
+			// TODO: Delay response by up to 500ms as per RFC.
 			err = s.send(resp, addr)
 			if err != nil {
 				log.Println("Unable to send response", err)
@@ -196,7 +205,8 @@ func (s *server) doQuestion(msg *dns.Msg) *dns.Msg {
 	}
 
 	for _, q := range msg.Question {
-		resp.Question = append(resp.Question, q)
+		// RFC 6762, section 6: Multicast DNS responses MUST NOT contain any questions in the
+		// Question Section.
 		resp.Answer = append(resp.Answer, localZone.query(q)...)
 	}
 
@@ -213,7 +223,7 @@ func (s *server) doResponse(msg *dns.Msg) *dns.Msg {
 
 	for _, q := range s.queries {
 		for _, a := range msg.Answer {
-			if q.q.Name == a.Header().Name {
+			if q.q.Name == a.Header().Name && (q.q.Qtype == a.Header().Rrtype || q.q.Qtype == dns.TypeANY) {
 				q.answer(a)
 			}
 		}
