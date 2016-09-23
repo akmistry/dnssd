@@ -18,6 +18,7 @@ var (
 	ip4Addr   = &net.UDPAddr{IP: net.ParseIP("224.0.0.251"), Port: 5353}
 	localZone = &zone{entries: make(map[string][]dns.RR)}
 
+	rrCache   *cache
 	ip4Server *server
 )
 
@@ -53,6 +54,7 @@ func PublishRR(rr dns.RR) {
 }
 
 func init() {
+	rrCache = newCache()
 	ip4Server = newServer(ip4Addr)
 }
 
@@ -69,6 +71,13 @@ func newServer(addr *net.UDPAddr) *server {
 
 func (s *server) query(r *Response) {
 	s.queries.add(r)
+
+	// Get cache answers, but also submit the query in case someone else gives us an answer.
+	cacheRrs := rrCache.get(r.q.Name, r.q.Qtype)
+	for _, a := range cacheRrs {
+		log.Println("Cached answer", a)
+		r.answer(a)
+	}
 
 	msg := new(dns.Msg)
 	// TODO: Use ID
@@ -160,6 +169,14 @@ func (s *server) doQuestion(msg *dns.Msg) *dns.Msg {
 }
 
 func (s *server) doResponse(msg *dns.Msg) *dns.Msg {
+	// Cache answers and additional RRs.
+	for _, a := range msg.Answer {
+		rrCache.add(a)
+	}
+	for _, a := range msg.Extra {
+		rrCache.add(a)
+	}
+
 	for _, a := range msg.Answer {
 		s.queries.answer(a)
 	}
