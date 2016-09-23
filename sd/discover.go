@@ -3,6 +3,7 @@ package sd
 import (
 	"log"
 	"net"
+	"time"
 
 	"github.com/miekg/dns"
 
@@ -59,8 +60,6 @@ func (q *Query) doInstanceQuery(name string) {
 	// Note: Only a single instance is expected for each instance name.
 	s := &Service{Name: name}
 	rrQ := mdns.QueryType(name, dns.TypeANY)
-	var aRr *dns.A
-	var aaaaRr *dns.AAAA
 	var srvRr *dns.SRV
 	var txtRr *dns.TXT
 	for {
@@ -68,27 +67,32 @@ func (q *Query) doInstanceQuery(name string) {
 		select {
 		case <-q.done:
 			return
-		case rr := <-rrQ.Chan:
+		case rr = <-rrQ.Chan:
 		}
 
 		switch rr.Header().Rrtype {
-		case dns.TypeA:
-			aRr = rr.(*dns.A)
-		case dns.TypeAAAA:
-			aaaaRr = rr.(*dns.AAAA)
 		case dns.TypeSRV:
 			srvRr = rr.(*dns.SRV)
 		case dns.TypeTXT:
 			txtRr = rr.(*dns.TXT)
 		}
 
-		// TODO: Wait for AAAA record, in case it exists.
-		if aRr != nil && srvRr != nil && txtRr != nil {
+		if srvRr != nil && txtRr != nil {
 			break
 		}
 	}
 
-	s.Ip = aRr.A
+	// Resolve the A record from the SRV target.
+	// TODO: Resolve AAAA record.
+	// TODO: Timeout and cancel.
+	aq := mdns.RetryQuery(srvRr.Target, dns.TypeA, 5, time.Second)
+	rr := <-aq.Chan
+	if rr == nil {
+		log.Println("No A record after retries", srvRr.Target)
+		return
+	}
+
+	s.Ip = rr.(*dns.A).A
 	s.Port = srvRr.Port
 	// TODO: Parse TXT.
 

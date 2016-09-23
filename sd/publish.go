@@ -10,7 +10,7 @@ import (
 	"github.com/akmistry/dnssd/mdns"
 )
 
-func Publish(name, service string, ip net.IP, port uint16, txt map[string][]byte) error {
+func Publish(name, service string, ip net.IP, port uint16, txt map[string][]byte) {
 	if name == "" || service == "" {
 		log.Panicln("name and service must be non-empty", name, service)
 	}
@@ -86,6 +86,4 @@ func Publish(name, service string, ip net.IP, port uint16, txt map[string][]byte
 	mdns.PublishRR(srvRr)
 	mdns.PublishRR(ptrRr)
 	mdns.PublishRR(txtRr)
-
-	return nil
 }

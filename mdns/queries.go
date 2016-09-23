@@ -2,6 +2,7 @@ package mdns
 
 import (
 	"sync"
+	"time"
 
 	"github.com/miekg/dns"
 )
@@ -30,6 +31,14 @@ func QueryType(name string, t uint16) *Response {
 	return resp
 }
 
+func RetryQuery(name string, t uint16, tries int, interval time.Duration) *Response {
+	ch := make(chan dns.RR)
+	resp := &Response{Chan: ch, ch: ch, done: make(chan bool)}
+	resp.q = dns.Question{Name: name, Qtype: t, Qclass: dns.ClassINET}
+	go resp.doRetries(tries, interval)
+	return resp
+}
+
 func (r *Response) OneShot() dns.RR {
 	rr := <-r.Chan
 	r.Done()
@@ -45,6 +54,27 @@ func (r *Response) do() {
 
 	<-r.done
 	ip4Server.endQuery(r)
+}
+
+func (r *Response) doRetries(tries int, interval time.Duration) {
+	for i := 0; i < tries; i++ {
+		q := QueryType(r.q.Name, r.q.Qtype)
+		select {
+		case rr := <-q.Chan:
+			select {
+			case <-r.done:
+			case r.ch <- rr:
+			}
+			q.Done()
+			return
+		case <-time.After(interval):
+			// Timeout, retry.
+		}
+		q.Done()
+	}
+
+	// No result after retries. Close result channel.
+	close(r.ch)
 }
 
 func (r *Response) answer(rr dns.RR) {

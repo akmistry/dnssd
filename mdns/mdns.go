@@ -74,6 +74,7 @@ func (s *server) query(r *Response) {
 	// TODO: Use ID
 	// msg.Id = dns.Id()
 	msg.Question = []dns.Question{r.q}
+	//log.Println("Sending query", msg)
 	err := s.send(msg, s.addr)
 	if err != nil {
 		log.Println("Error sending query", err)
@@ -111,6 +112,8 @@ func (s *server) listen() {
 			log.Println("Error unpacking DNS packet", err)
 			continue
 		}
+		//log.Println("=======================================================================")
+		//log.Println(msg)
 
 		var resp *dns.Msg
 		if msg.MsgHdr.Response {
@@ -178,6 +181,8 @@ func (z *zone) query(q dns.Question) []dns.RR {
 		}
 	}
 
+	//log.Println("Query", q)
+	//log.Println("Answer", ans)
 	return ans
 }
 
@@ -185,6 +190,7 @@ func (z *zone) publish(rr dns.RR) {
 	z.lock.Lock()
 	defer z.lock.Unlock()
 
+	//log.Println("Publishing", rr)
 	name := rr.Header().Name
 	z.entries[name] = append(z.entries[name], rr)
 }
