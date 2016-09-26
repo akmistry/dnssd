@@ -75,7 +75,6 @@ func (s *server) query(q *Query) {
 	// Get cache answers, but also submit the query in case someone else gives us an answer.
 	cacheRrs := rrCache.get(q.q.Name, q.q.Qtype)
 	for _, a := range cacheRrs {
-		log.Println("Cached answer", a)
 		q.answer(a)
 	}
 	if len(cacheRrs) > 0 && !q.opts.Continuous {
@@ -84,7 +83,6 @@ func (s *server) query(q *Query) {
 
 	msg := new(dns.Msg)
 	msg.Question = []dns.Question{q.q}
-	//log.Println("Sending query", msg)
 	err := s.send(msg, nil)
 	if err != nil {
 		log.Println("Error sending query", err)
@@ -168,7 +166,6 @@ func (s *server) doQuestion(msg *dns.Msg) *dns.Msg {
 	}
 
 	// TODO: Fill additional data.
-	log.Println("Responding", resp)
 
 	return resp
 }

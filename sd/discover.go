@@ -89,20 +89,39 @@ func (q *Query) doInstanceQuery(name string) {
 		}
 	}
 
-	// Resolve the A record from the SRV target.
-	// TODO: Resolve AAAA record.
-	// TODO: Timeout and cancel.
+	// Resolve the A or AAAA record from the SRV target.
 	// Again, be aggressive, but we only care about the first result.
 	aq := mdns.NewQuery(srvRr.Target, dns.TypeA,
 		&mdns.QueryOpts{Retries: 5, RetryInterval: time.Second * time.Duration(1)})
-	rr := <-aq.Chan
+	aaaaq := mdns.NewQuery(srvRr.Target, dns.TypeAAAA,
+		&mdns.QueryOpts{Retries: 5, RetryInterval: time.Second * time.Duration(1)})
+	ch := make(chan net.IP, 2)
+	go func() {
+		rr := <-aq.Chan
+		if rr != nil {
+			ch <- rr.(*dns.A).A.To4()
+		} else {
+			ch <- nil
+		}
+	}()
+	go func() {
+		rr := <-aaaaq.Chan
+		if rr != nil {
+			ch <- rr.(*dns.AAAA).AAAA.To16()
+		} else {
+			ch <- nil
+		}
+	}()
+	for i := 0; i < 2 && s.Ip == nil; i++ {
+		s.Ip = <-ch
+	}
 	aq.Done()
-	if rr == nil {
-		log.Println("No A record after retries", srvRr.Target)
+	aaaaq.Done()
+	if s.Ip == nil {
+		log.Println("No A or AAAA record after retries", srvRr.Target)
 		return
 	}
 
-	s.Ip = rr.(*dns.A).A
 	s.Port = srvRr.Port
 	// TODO: Parse TXT.
 
