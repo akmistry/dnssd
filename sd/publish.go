@@ -22,13 +22,11 @@ func Publish(name, service string, ip net.IP, port uint16, txt map[string][]byte
 	instanceName := name + "." + service
 	var rr dns.RR
 	if ip4 := ip.To4(); ip4 != nil {
-		log.Println("Publishing A record")
 		aRr := new(dns.A)
 		aRr.Hdr = dns.RR_Header{Name: instanceName, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 3600}
 		aRr.A = ip4
 		rr = aRr
 	} else if ip6 := ip.To16(); ip6 != nil {
-		log.Println("Publishing AAAA record")
 		aaaaRr := new(dns.AAAA)
 		aaaaRr.Hdr = dns.RR_Header{Name: instanceName, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 3600}
 		aaaaRr.AAAA = ip6
