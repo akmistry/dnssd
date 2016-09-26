@@ -1,6 +1,7 @@
 package mdns
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -11,78 +12,85 @@ type Query struct {
 	Chan <-chan dns.RR
 
 	ch         chan<- dns.RR
-	done       chan bool
+	ctx        context.Context
+	cancelFunc context.CancelFunc
 	q          dns.Question
-	continuous bool
+	opts       QueryOpts
 }
 
-func NewQuery(name string) *Query {
+type QueryOpts struct {
+	Continuous    bool
+	Retries       int
+	RetryInterval time.Duration
+}
+
+var defaultOpts QueryOpts
+
+func NewQuery(name string, qtype uint16, opts *QueryOpts) *Query {
 	ch := make(chan dns.RR)
-	resp := &Query{Chan: ch, ch: ch, done: make(chan bool)}
-	resp.q = dns.Question{Name: name, Qtype: dns.TypeANY, Qclass: dns.ClassINET}
-	go resp.do()
-	return resp
+	ctx, cf := context.WithCancel(context.Background())
+	if opts == nil {
+		opts = &defaultOpts
+	}
+	query := &Query{Chan: ch, ch: ch, ctx: ctx, cancelFunc: cf, opts: *opts}
+	query.q = dns.Question{Name: name, Qtype: qtype, Qclass: dns.ClassINET}
+	go query.do()
+	return query
 }
 
-func NewQueryType(name string, t uint16) *Query {
-	ch := make(chan dns.RR)
-	resp := &Query{Chan: ch, ch: ch, done: make(chan bool)}
-	resp.q = dns.Question{Name: name, Qtype: t, Qclass: dns.ClassINET}
-	go resp.do()
-	return resp
-}
-
-func NewRetryQuery(name string, t uint16, tries int, interval time.Duration) *Query {
-	ch := make(chan dns.RR)
-	resp := &Query{Chan: ch, ch: ch, done: make(chan bool)}
-	resp.q = dns.Question{Name: name, Qtype: t, Qclass: dns.ClassINET}
-	go resp.doRetries(tries, interval)
-	return resp
-}
-
-func (r *Query) OneShot() dns.RR {
-	rr := <-r.Chan
-	r.Done()
+func (q *Query) OneShot() dns.RR {
+	rr := <-q.Chan
+	q.Done()
 	return rr
 }
 
-func (r *Query) Done() {
-	close(r.done)
+func (q *Query) Done() {
+	q.cancelFunc()
 }
 
-func (r *Query) do() {
-	ip4Server.query(r)
+func (q *Query) do() {
+	var tries uint = 1
+	retries := q.opts.Retries
+	if retries > 0 {
+		tries = uint(retries) + 1
+	} else if retries < 0 {
+		tries = uint(retries)
+	}
 
-	<-r.done
-	ip4Server.endQuery(r)
+	done := false
+	for i := uint(0); i < tries && !done; i++ {
+		ip4Server.query(q)
 
-	close(r.ch)
-}
-
-func (r *Query) doRetries(tries int, interval time.Duration) {
-	for i := 0; i < tries; i++ {
-		q := NewQueryType(r.q.Name, r.q.Qtype)
-		select {
-		case rr := <-q.Chan:
-			r.answer(rr)
-			q.Done()
-			return
-		case <-time.After(interval):
-			// Timeout, retry.
+		if tries == 1 {
+			// No retry timeout.
+			<-q.ctx.Done()
+			done = true
+		} else {
+			select {
+			case <-q.ctx.Done():
+				// Done.
+				done = true
+			case <-time.After(q.opts.RetryInterval):
+				// Timeout, retry.
+			}
 		}
-		q.Done()
+
+		ip4Server.endQuery(q)
 	}
 
 	// No result after retries. Close result channel.
-	close(r.ch)
+	close(q.ch)
 }
 
-func (r *Query) answer(rr dns.RR) {
+func (q *Query) answer(rr dns.RR) {
 	select {
-	case <-r.done:
+	case <-q.ctx.Done():
 		// Do nothing, query is finished.
-	case r.ch <- rr:
+	case q.ch <- rr:
 		// Answer delivered.
+	}
+	if !q.opts.Continuous {
+		q.Done()
 	}
 }
 

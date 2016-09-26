@@ -4,6 +4,8 @@ import (
 	"flag"
 	"log"
 
+	"github.com/miekg/dns"
+
 	"github.com/akmistry/dnssd/mdns"
 	"github.com/akmistry/dnssd/sd"
 )
@@ -23,7 +25,7 @@ func main() {
 	}
 
 	if *query != "" {
-		r := mdns.NewQuery(*query)
+		r := mdns.NewQuery(*query, dns.TypeANY, &mdns.QueryOpts{Continuous: true})
 		i := 0
 		for rr := range r.Chan {
 			log.Println(rr)

@@ -37,7 +37,8 @@ func (q *Query) Done() {
 }
 
 func (q *Query) do() {
-	ptrQ := mdns.NewQueryType(q.serv, dns.TypePTR)
+	ptrQ := mdns.NewQuery(q.serv, dns.TypePTR,
+		&mdns.QueryOpts{Continuous: true, Retries: -1, RetryInterval: time.Second * time.Duration(60)})
 	for {
 		var rr dns.RR
 		select {
@@ -59,7 +60,12 @@ func (q *Query) do() {
 func (q *Query) doInstanceQuery(name string) {
 	// Note: Only a single instance is expected for each instance name.
 	s := &Service{Name: name}
-	rrQ := mdns.NewQueryType(name, dns.TypeANY)
+	// Ask for all records, but we're really just looking for TXT and SRV... for now.
+	// Be aggressive with query attempts.
+	rrQ := mdns.NewQuery(name, dns.TypeANY,
+		&mdns.QueryOpts{Continuous: true, Retries: 5, RetryInterval: time.Second * time.Duration(1)})
+	defer rrQ.Done()
+
 	var srvRr *dns.SRV
 	var txtRr *dns.TXT
 	for {
@@ -86,7 +92,9 @@ func (q *Query) doInstanceQuery(name string) {
 	// Resolve the A record from the SRV target.
 	// TODO: Resolve AAAA record.
 	// TODO: Timeout and cancel.
-	aq := mdns.NewRetryQuery(srvRr.Target, dns.TypeA, 5, time.Second)
+	// Again, be aggressive, but we only care about the first result.
+	aq := mdns.NewQuery(srvRr.Target, dns.TypeA,
+		&mdns.QueryOpts{Retries: 5, RetryInterval: time.Second * time.Duration(1)})
 	rr := <-aq.Chan
 	aq.Done()
 	if rr == nil {

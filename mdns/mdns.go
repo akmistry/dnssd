@@ -78,7 +78,7 @@ func (s *server) query(q *Query) {
 		log.Println("Cached answer", a)
 		q.answer(a)
 	}
-	if len(cacheRrs) > 0 && !q.continuous {
+	if len(cacheRrs) > 0 && !q.opts.Continuous {
 		return
 	}
 
