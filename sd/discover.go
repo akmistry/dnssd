@@ -78,6 +78,7 @@ func (q *Query) doInstanceQuery(name string) {
 		}
 
 		if srvRr != nil && txtRr != nil {
+			rrQ.Done()
 			break
 		}
 	}
@@ -87,6 +88,7 @@ func (q *Query) doInstanceQuery(name string) {
 	// TODO: Timeout and cancel.
 	aq := mdns.RetryQuery(srvRr.Target, dns.TypeA, 5, time.Second)
 	rr := <-aq.Chan
+	aq.Done()
 	if rr == nil {
 		log.Println("No A record after retries", srvRr.Target)
 		return

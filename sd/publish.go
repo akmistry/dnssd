@@ -17,23 +17,24 @@ func Publish(name, service string, ip net.IP, port uint16, txt map[string][]byte
 	if !strings.HasSuffix(service, ".local.") {
 		log.Panicln("Service MUST be in the local. domain", service)
 	}
-	if len(ip) != 4 && len(ip) != 16 {
-		log.Panicln("Invalid IP address", ip)
-	}
 
 	// Construct A or AAAA record.
 	instanceName := name + "." + service
 	var rr dns.RR
-	if len(ip) == 4 {
+	if ip4 := ip.To4(); ip4 != nil {
+		log.Println("Publishing A record")
 		aRr := new(dns.A)
 		aRr.Hdr = dns.RR_Header{Name: instanceName, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 3600}
-		aRr.A = ip
+		aRr.A = ip4
 		rr = aRr
-	} else {
+	} else if ip6 := ip.To16(); ip6 != nil {
+		log.Println("Publishing AAAA record")
 		aaaaRr := new(dns.AAAA)
 		aaaaRr.Hdr = dns.RR_Header{Name: instanceName, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 3600}
-		aaaaRr.AAAA = ip
+		aaaaRr.AAAA = ip6
 		rr = aaaaRr
+	} else {
+		log.Panicln("Invalid IP address", ip)
 	}
 
 	// Construct SRV record.

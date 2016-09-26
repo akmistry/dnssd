@@ -54,6 +54,8 @@ func (r *Response) do() {
 
 	<-r.done
 	ip4Server.endQuery(r)
+
+	close(r.ch)
 }
 
 func (r *Response) doRetries(tries int, interval time.Duration) {
@@ -61,10 +63,7 @@ func (r *Response) doRetries(tries int, interval time.Duration) {
 		q := QueryType(r.q.Name, r.q.Qtype)
 		select {
 		case rr := <-q.Chan:
-			select {
-			case <-r.done:
-			case r.ch <- rr:
-			}
+			r.answer(rr)
 			q.Done()
 			return
 		case <-time.After(interval):
@@ -106,14 +105,14 @@ func (m *queryMap) remove(r *Response) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
-	qs := m.queries[r.q.Name]
+	name := r.q.Name
+	qs := m.queries[name]
 
 	for i, q := range qs {
 		if q == r {
 			last := len(qs) - 1
-			qs[i] = qs[last]
-			qs[last] = nil
-			m.queries[q.q.Name] = qs[:last]
+			qs[i], qs[last] = qs[last], nil
+			m.queries[name] = qs[:last]
 			break
 		}
 	}

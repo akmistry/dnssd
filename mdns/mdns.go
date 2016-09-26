@@ -16,6 +16,7 @@ const (
 
 var (
 	ip4Addr   = &net.UDPAddr{IP: net.ParseIP("224.0.0.251"), Port: 5353}
+	ip6Addr   = &net.UDPAddr{IP: net.ParseIP("FF02::FB"), Port: 5353}
 	localZone = &zone{entries: make(map[string][]dns.RR)}
 
 	rrCache   *cache
@@ -23,8 +24,7 @@ var (
 )
 
 type server struct {
-	addr *net.UDPAddr
-	conn *net.UDPConn
+	conn *multicastConn
 
 	queries *queryMap
 }
@@ -59,12 +59,12 @@ func init() {
 }
 
 func newServer(addr *net.UDPAddr) *server {
-	conn, err := net.ListenMulticastUDP("udp", nil, addr)
+	conn, err := newConn(addr)
 	if err != nil {
 		log.Panicln("Unable to listen to MDNS port", err)
 	}
 
-	s := &server{addr: addr, conn: conn, queries: newQueryMap()}
+	s := &server{conn: conn, queries: newQueryMap()}
 	go s.listen()
 	return s
 }
@@ -73,18 +73,18 @@ func (s *server) query(r *Response) {
 	s.queries.add(r)
 
 	// Get cache answers, but also submit the query in case someone else gives us an answer.
-	cacheRrs := rrCache.get(r.q.Name, r.q.Qtype)
-	for _, a := range cacheRrs {
-		log.Println("Cached answer", a)
-		r.answer(a)
-	}
+	/*
+		cacheRrs := rrCache.get(r.q.Name, r.q.Qtype)
+		for _, a := range cacheRrs {
+			log.Println("Cached answer", a)
+			r.answer(a)
+		}
+	*/
 
 	msg := new(dns.Msg)
-	// TODO: Use ID
-	// msg.Id = dns.Id()
 	msg.Question = []dns.Question{r.q}
 	//log.Println("Sending query", msg)
-	err := s.send(msg, s.addr)
+	err := s.send(msg, nil)
 	if err != nil {
 		log.Println("Error sending query", err)
 	}
@@ -94,23 +94,22 @@ func (s *server) endQuery(r *Response) {
 	s.queries.remove(r)
 }
 
-func (s *server) send(msg *dns.Msg, addr *net.UDPAddr) error {
+func (s *server) send(msg *dns.Msg, addr net.Addr) error {
 	b, err := msg.Pack()
 	if err != nil {
 		return err
 	}
 
-	_, err = s.conn.WriteToUDP(b, addr)
-	if err != nil {
-		return err
+	if addr == nil {
+		return s.conn.sendMulticast(b)
 	}
-	return nil
+	return s.conn.send(b, addr)
 }
 
 func (s *server) listen() {
 	buf := make([]byte, bufSize)
 	for {
-		n, addr, err := s.conn.ReadFromUDP(buf)
+		n, _, err := s.conn.recv(buf)
 		if err != nil {
 			log.Panicln("Error reading UDP packet", err)
 		}
@@ -133,7 +132,8 @@ func (s *server) listen() {
 
 		if resp != nil {
 			// TODO: Delay response by up to 500ms as per RFC.
-			err = s.send(resp, addr)
+			// TODO: Send unicast as per RFC.
+			err = s.send(resp, nil)
 			if err != nil {
 				log.Println("Unable to send response", err)
 			}
@@ -164,6 +164,8 @@ func (s *server) doQuestion(msg *dns.Msg) *dns.Msg {
 	if len(resp.Answer) == 0 {
 		return nil
 	}
+
+	log.Println("Responding", resp)
 
 	return resp
 }
@@ -198,8 +200,6 @@ func (z *zone) query(q dns.Question) []dns.RR {
 		}
 	}
 
-	//log.Println("Query", q)
-	//log.Println("Answer", ans)
 	return ans
 }
 
@@ -207,7 +207,6 @@ func (z *zone) publish(rr dns.RR) {
 	z.lock.Lock()
 	defer z.lock.Unlock()
 
-	//log.Println("Publishing", rr)
 	name := rr.Header().Name
 	z.entries[name] = append(z.entries[name], rr)
 }

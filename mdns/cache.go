@@ -47,7 +47,7 @@ func (c *cache) get(name string, t uint16) []dns.RR {
 
 	tm := c.entries[name]
 	if tm == nil {
-		log.Println("Name not found")
+		//log.Println("Name not found")
 		return []dns.RR{}
 	}
 	return tm.get(name, t)
@@ -76,7 +76,7 @@ func (tm *typeMap) add(rr dns.RR) {
 	}
 
 	if e == nil {
-		log.Println("Adding to cache", rr, "deadline", deadline)
+		//log.Println("Adding to cache", rr, "deadline", deadline)
 		e = &cacheEntry{rr: dns.Copy(rr), deadline: deadline}
 		tm.entries[rrType] = e
 	}
@@ -89,7 +89,7 @@ func (e *cacheEntry) resetTtl() dns.RR {
 		ttl = 0
 	}
 	rr.Header().Ttl = uint32(ttl)
-	log.Println("From cache with reset ttl", rr)
+	//log.Println("From cache with reset ttl", rr)
 	return rr
 }
 
@@ -98,7 +98,7 @@ func (tm *typeMap) get(name string, t uint16) []dns.RR {
 	if t != dns.TypeANY {
 		e := tm.entries[t]
 		if e == nil || e.deadline.After(now) {
-			log.Println("Entry not found, or deadline expired", e)
+			//log.Println("Entry not found, or deadline expired", e)
 			delete(tm.entries, t)
 			return []dns.RR{}
 		}
@@ -108,7 +108,7 @@ func (tm *typeMap) get(name string, t uint16) []dns.RR {
 	var ret []dns.RR
 	for k, v := range tm.entries {
 		if now.After(v.deadline) {
-			log.Println("Deadline expired", v)
+			//log.Println("Deadline expired", v)
 			delete(tm.entries, k)
 			continue
 		}
