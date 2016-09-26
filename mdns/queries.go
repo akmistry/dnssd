@@ -7,49 +7,50 @@ import (
 	"github.com/miekg/dns"
 )
 
-type Response struct {
+type Query struct {
 	Chan <-chan dns.RR
 
-	ch   chan<- dns.RR
-	done chan bool
-	q    dns.Question
+	ch         chan<- dns.RR
+	done       chan bool
+	q          dns.Question
+	continuous bool
 }
 
-func Query(name string) *Response {
+func NewQuery(name string) *Query {
 	ch := make(chan dns.RR)
-	resp := &Response{Chan: ch, ch: ch, done: make(chan bool)}
+	resp := &Query{Chan: ch, ch: ch, done: make(chan bool)}
 	resp.q = dns.Question{Name: name, Qtype: dns.TypeANY, Qclass: dns.ClassINET}
 	go resp.do()
 	return resp
 }
 
-func QueryType(name string, t uint16) *Response {
+func NewQueryType(name string, t uint16) *Query {
 	ch := make(chan dns.RR)
-	resp := &Response{Chan: ch, ch: ch, done: make(chan bool)}
+	resp := &Query{Chan: ch, ch: ch, done: make(chan bool)}
 	resp.q = dns.Question{Name: name, Qtype: t, Qclass: dns.ClassINET}
 	go resp.do()
 	return resp
 }
 
-func RetryQuery(name string, t uint16, tries int, interval time.Duration) *Response {
+func NewRetryQuery(name string, t uint16, tries int, interval time.Duration) *Query {
 	ch := make(chan dns.RR)
-	resp := &Response{Chan: ch, ch: ch, done: make(chan bool)}
+	resp := &Query{Chan: ch, ch: ch, done: make(chan bool)}
 	resp.q = dns.Question{Name: name, Qtype: t, Qclass: dns.ClassINET}
 	go resp.doRetries(tries, interval)
 	return resp
 }
 
-func (r *Response) OneShot() dns.RR {
+func (r *Query) OneShot() dns.RR {
 	rr := <-r.Chan
 	r.Done()
 	return rr
 }
 
-func (r *Response) Done() {
+func (r *Query) Done() {
 	close(r.done)
 }
 
-func (r *Response) do() {
+func (r *Query) do() {
 	ip4Server.query(r)
 
 	<-r.done
@@ -58,9 +59,9 @@ func (r *Response) do() {
 	close(r.ch)
 }
 
-func (r *Response) doRetries(tries int, interval time.Duration) {
+func (r *Query) doRetries(tries int, interval time.Duration) {
 	for i := 0; i < tries; i++ {
-		q := QueryType(r.q.Name, r.q.Qtype)
+		q := NewQueryType(r.q.Name, r.q.Qtype)
 		select {
 		case rr := <-q.Chan:
 			r.answer(rr)
@@ -76,7 +77,7 @@ func (r *Response) doRetries(tries int, interval time.Duration) {
 	close(r.ch)
 }
 
-func (r *Response) answer(rr dns.RR) {
+func (r *Query) answer(rr dns.RR) {
 	select {
 	case <-r.done:
 		// Do nothing, query is finished.
@@ -87,21 +88,21 @@ func (r *Response) answer(rr dns.RR) {
 
 type queryMap struct {
 	lock    sync.Mutex
-	queries map[string][]*Response
+	queries map[string][]*Query
 }
 
 func newQueryMap() *queryMap {
-	return &queryMap{queries: make(map[string][]*Response)}
+	return &queryMap{queries: make(map[string][]*Query)}
 }
 
-func (m *queryMap) add(r *Response) {
+func (m *queryMap) add(r *Query) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
 	m.queries[r.q.Name] = append(m.queries[r.q.Name], r)
 }
 
-func (m *queryMap) remove(r *Response) {
+func (m *queryMap) remove(r *Query) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
@@ -120,7 +121,7 @@ func (m *queryMap) remove(r *Response) {
 
 // TODO: Make this more efficient by coalescing RRs by name.
 func (m *queryMap) answer(rr dns.RR) {
-	var rs []*Response
+	var rs []*Query
 
 	m.lock.Lock()
 	name := rr.Header().Name

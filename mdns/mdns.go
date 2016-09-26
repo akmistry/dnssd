@@ -69,20 +69,21 @@ func newServer(addr *net.UDPAddr) *server {
 	return s
 }
 
-func (s *server) query(r *Response) {
-	s.queries.add(r)
+func (s *server) query(q *Query) {
+	s.queries.add(q)
 
 	// Get cache answers, but also submit the query in case someone else gives us an answer.
-	/*
-		cacheRrs := rrCache.get(r.q.Name, r.q.Qtype)
-		for _, a := range cacheRrs {
-			log.Println("Cached answer", a)
-			r.answer(a)
-		}
-	*/
+	cacheRrs := rrCache.get(q.q.Name, q.q.Qtype)
+	for _, a := range cacheRrs {
+		log.Println("Cached answer", a)
+		q.answer(a)
+	}
+	if len(cacheRrs) > 0 && !q.continuous {
+		return
+	}
 
 	msg := new(dns.Msg)
-	msg.Question = []dns.Question{r.q}
+	msg.Question = []dns.Question{q.q}
 	//log.Println("Sending query", msg)
 	err := s.send(msg, nil)
 	if err != nil {
@@ -90,8 +91,8 @@ func (s *server) query(r *Response) {
 	}
 }
 
-func (s *server) endQuery(r *Response) {
-	s.queries.remove(r)
+func (s *server) endQuery(q *Query) {
+	s.queries.remove(q)
 }
 
 func (s *server) send(msg *dns.Msg, addr net.Addr) error {
@@ -133,6 +134,7 @@ func (s *server) listen() {
 		if resp != nil {
 			// TODO: Delay response by up to 500ms as per RFC.
 			// TODO: Send unicast as per RFC.
+			// TODO: Coalesce responses.
 			err = s.send(resp, nil)
 			if err != nil {
 				log.Println("Unable to send response", err)
@@ -165,6 +167,7 @@ func (s *server) doQuestion(msg *dns.Msg) *dns.Msg {
 		return nil
 	}
 
+	// TODO: Fill additional data.
 	log.Println("Responding", resp)
 
 	return resp

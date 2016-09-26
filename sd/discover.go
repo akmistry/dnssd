@@ -37,7 +37,7 @@ func (q *Query) Done() {
 }
 
 func (q *Query) do() {
-	ptrQ := mdns.QueryType(q.serv, dns.TypePTR)
+	ptrQ := mdns.NewQueryType(q.serv, dns.TypePTR)
 	for {
 		var rr dns.RR
 		select {
@@ -59,7 +59,7 @@ func (q *Query) do() {
 func (q *Query) doInstanceQuery(name string) {
 	// Note: Only a single instance is expected for each instance name.
 	s := &Service{Name: name}
-	rrQ := mdns.QueryType(name, dns.TypeANY)
+	rrQ := mdns.NewQueryType(name, dns.TypeANY)
 	var srvRr *dns.SRV
 	var txtRr *dns.TXT
 	for {
@@ -86,7 +86,7 @@ func (q *Query) doInstanceQuery(name string) {
 	// Resolve the A record from the SRV target.
 	// TODO: Resolve AAAA record.
 	// TODO: Timeout and cancel.
-	aq := mdns.RetryQuery(srvRr.Target, dns.TypeA, 5, time.Second)
+	aq := mdns.NewRetryQuery(srvRr.Target, dns.TypeA, 5, time.Second)
 	rr := <-aq.Chan
 	aq.Done()
 	if rr == nil {

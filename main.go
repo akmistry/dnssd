@@ -23,7 +23,7 @@ func main() {
 	}
 
 	if *query != "" {
-		r := mdns.Query(*query)
+		r := mdns.NewQuery(*query)
 		i := 0
 		for rr := range r.Chan {
 			log.Println(rr)
