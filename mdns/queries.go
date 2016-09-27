@@ -12,6 +12,7 @@ type Query struct {
 	Chan <-chan dns.RR
 
 	ch         chan<- dns.RR
+	ansCh      chan dns.RR
 	ctx        context.Context
 	cancelFunc context.CancelFunc
 	q          dns.Question
@@ -32,7 +33,7 @@ func NewQuery(name string, qtype uint16, opts *QueryOpts) *Query {
 	if opts == nil {
 		opts = &defaultOpts
 	}
-	query := &Query{Chan: ch, ch: ch, ctx: ctx, cancelFunc: cf, opts: *opts}
+	query := &Query{Chan: ch, ch: ch, ansCh: make(chan dns.RR), ctx: ctx, cancelFunc: cf, opts: *opts}
 	query.q = dns.Question{Name: name, Qtype: qtype, Qclass: dns.ClassINET}
 	go query.do()
 	return query
@@ -57,6 +58,28 @@ func (q *Query) do() {
 		tries = uint(retries)
 	}
 
+	go func() {
+		defer close(q.ch)
+		for {
+			var rr dns.RR
+			select {
+			case <-q.ctx.Done():
+				return
+			case rr = <-q.ansCh:
+			}
+
+			select {
+			case <-q.ctx.Done():
+				return
+			case q.ch <- rr:
+			}
+			if !q.opts.Continuous {
+				q.Done()
+				return
+			}
+		}
+	}()
+
 	done := false
 	for i := uint(0); i < tries && !done; i++ {
 		ip4Server.query(q)
@@ -78,19 +101,15 @@ func (q *Query) do() {
 		ip4Server.endQuery(q)
 	}
 
-	// No result after retries. Close result channel.
-	close(q.ch)
+	q.Done()
 }
 
 func (q *Query) answer(rr dns.RR) {
 	select {
 	case <-q.ctx.Done():
 		// Do nothing, query is finished.
-	case q.ch <- rr:
+	case q.ansCh <- rr:
 		// Answer delivered.
-	}
-	if !q.opts.Continuous {
-		q.Done()
 	}
 }
 
