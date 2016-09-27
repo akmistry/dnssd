@@ -1,6 +1,7 @@
 package sd
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"time"
@@ -16,19 +17,34 @@ type Service struct {
 	Port uint16
 }
 
-// TODO: Solve the naming problem... and get a Turing award in the process.
 type Query struct {
 	Chan <-chan *Service
 
-	serv string
-	ch   chan<- *Service
-	done chan bool
+	serv  string
+	ch    chan<- *Service
+	ansCh chan *Service
+	done  chan bool
+	opts  QueryOpts
 }
 
-func Discover(service string) *Query {
+type QueryOpts struct {
+	Dedup        bool
+	ScanInterval time.Duration
+}
+
+const defaultScanInterval = time.Second * 60
+
+var defaultOpts QueryOpts
+
+func Discover(service string, opts *QueryOpts) *Query {
 	ch := make(chan *Service)
-	q := &Query{Chan: ch, serv: service, ch: ch, done: make(chan bool)}
+	if opts == nil {
+		opts = &defaultOpts
+	}
+	q := &Query{Chan: ch, serv: service, ch: ch, ansCh: make(chan *Service),
+		done: make(chan bool), opts: *opts}
 	go q.do()
+	go q.dedup()
 	return q
 }
 
@@ -36,9 +52,30 @@ func (q *Query) Done() {
 	close(q.done)
 }
 
+func (q *Query) dedup() {
+	seen := make(map[string]bool)
+	for s := range q.ansCh {
+		str := fmt.Sprintf("%s %v %d", s.Name, s.Ip, s.Port)
+		if seen[str] {
+			continue
+		}
+		seen[str] = true
+
+		select {
+		case <-q.done:
+			return
+		case q.ch <- s:
+		}
+	}
+}
+
 func (q *Query) do() {
+	scanInterval := q.opts.ScanInterval
+	if scanInterval == 0 {
+		scanInterval = defaultScanInterval
+	}
 	ptrQ := mdns.NewQuery(q.serv, dns.TypePTR,
-		&mdns.QueryOpts{Continuous: true, Retries: -1, RetryInterval: time.Second * time.Duration(60)})
+		&mdns.QueryOpts{Continuous: true, Retries: -1, RetryInterval: scanInterval})
 	for {
 		var rr dns.RR
 		select {
@@ -127,6 +164,6 @@ func (q *Query) doInstanceQuery(name string) {
 
 	select {
 	case <-q.done:
-	case q.ch <- s:
+	case q.ansCh <- s:
 	}
 }

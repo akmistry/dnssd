@@ -38,7 +38,7 @@ func main() {
 	}
 
 	if *service != "" {
-		q := sd.Discover(*service)
+		q := sd.Discover(*service, &sd.QueryOpts{Dedup: true})
 		i := 0
 		for s := range q.Chan {
 			log.Println(s)
