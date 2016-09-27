@@ -1,6 +1,7 @@
 package sd
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -20,11 +21,12 @@ type Service struct {
 type Query struct {
 	Chan <-chan *Service
 
-	serv  string
-	ch    chan<- *Service
-	ansCh chan *Service
-	done  chan bool
-	opts  QueryOpts
+	serv       string
+	ch         chan<- *Service
+	ansCh      chan *Service
+	ctx        context.Context
+	cancelFunc context.CancelFunc
+	opts       QueryOpts
 }
 
 type QueryOpts struct {
@@ -38,31 +40,34 @@ var defaultOpts QueryOpts
 
 func Discover(service string, opts *QueryOpts) *Query {
 	ch := make(chan *Service)
+	ctx, cf := context.WithCancel(context.Background())
 	if opts == nil {
 		opts = &defaultOpts
 	}
 	q := &Query{Chan: ch, serv: service, ch: ch, ansCh: make(chan *Service),
-		done: make(chan bool), opts: *opts}
+		ctx: ctx, cancelFunc: cf, opts: *opts}
 	go q.do()
 	go q.dedup()
 	return q
 }
 
 func (q *Query) Done() {
-	close(q.done)
+	q.cancelFunc()
 }
 
 func (q *Query) dedup() {
 	seen := make(map[string]bool)
 	for s := range q.ansCh {
-		str := fmt.Sprintf("%s %v %d", s.Name, s.Ip, s.Port)
-		if seen[str] {
-			continue
+		if q.opts.Dedup {
+			str := fmt.Sprintf("%s %v %d", s.Name, s.Ip, s.Port)
+			if seen[str] {
+				continue
+			}
+			seen[str] = true
 		}
-		seen[str] = true
 
 		select {
-		case <-q.done:
+		case <-q.ctx.Done():
 			return
 		case q.ch <- s:
 		}
@@ -79,7 +84,7 @@ func (q *Query) do() {
 	for {
 		var rr dns.RR
 		select {
-		case <-q.done:
+		case <-q.ctx.Done():
 			return
 		case rr = <-ptrQ.Chan:
 		}
@@ -108,7 +113,7 @@ func (q *Query) doInstanceQuery(name string) {
 	for {
 		var rr dns.RR
 		select {
-		case <-q.done:
+		case <-q.ctx.Done():
 			return
 		case rr = <-rrQ.Chan:
 		}
@@ -163,7 +168,7 @@ func (q *Query) doInstanceQuery(name string) {
 	// TODO: Parse TXT.
 
 	select {
-	case <-q.done:
+	case <-q.ctx.Done():
 	case q.ansCh <- s:
 	}
 }
