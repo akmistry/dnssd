@@ -125,6 +125,10 @@ func (q *Query) doInstanceQuery(name string) {
 		case rr = <-rrQ.Chan:
 		}
 
+		if rr == nil {
+			return
+		}
+
 		switch rr.Header().Rrtype {
 		case dns.TypeSRV:
 			srvRr = rr.(*dns.SRV)
