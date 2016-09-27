@@ -57,7 +57,14 @@ func (q *Query) Done() {
 
 func (q *Query) dedup() {
 	seen := make(map[string]bool)
-	for s := range q.ansCh {
+	for {
+		var s *Service
+		select {
+		case <-q.ctx.Done():
+			return
+		case s = <-q.ansCh:
+		}
+
 		if q.opts.Dedup {
 			str := fmt.Sprintf("%s %v %d", s.Name, s.Ip, s.Port)
 			if seen[str] {
